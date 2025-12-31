@@ -1,0 +1,16 @@
+services:
+  tg_markers:
+    image: tgmarkers:latest
+    container_name: tg_markers
+    ports:
+      - "5001:5001"
+    volumes:
+      # Database and session files
+      - ./data:/app/data
+      # Downloaded media
+      - ./media:/app/media
+      # Environment variables
+      - ./.env:/app/.env
+    restart: unless-stopped
+    environment:
+      - PYTHONUNBUFFERED=1

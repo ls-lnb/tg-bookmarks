@@ -1,0 +1,12 @@
+.env
+__pycache__/
+*.pyc
+.venv/
+data/
+media/
+*.sqlite
+*.session
+*.session-journal
+.sesskey
+*.tar
+publish.sh
