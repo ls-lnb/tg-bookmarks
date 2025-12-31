@@ -48,6 +48,21 @@ def upsert_bookmark(message_id, topic_id, text, media_path, content_type, date):
         'date': date
     })
 
+def upsert_bookmarks_batch(bookmarks_list):
+    """Batch upsert a list of bookmarks dictionaries."""
+    if not bookmarks_list:
+        return
+    # upsert_all requires a list of dictionaries and the pk
+    bookmarks.upsert_all(bookmarks_list, pk='id')
+
+def get_max_message_id(topic_id):
+    """Get the maximum message_id for a given topic."""
+    # fastlite/sqlite-utils doesn't have a direct max() helper, execute SQL
+    result = list(db.execute("SELECT MAX(message_id) FROM bookmarks WHERE topic_id = ?", [topic_id]))
+    if result and result[0][0] is not None:
+        return result[0][0]
+    return 0
+
 def prune_bookmarks(topic_id, active_ids):
     """Delete bookmarks in a topic that are not in the active_ids list."""
     if not active_ids:

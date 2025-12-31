@@ -3,7 +3,7 @@ import asyncio
 from telethon import TelegramClient, events, functions, types
 from telethon.tl.types import MessageService, MessageActionTopicCreate
 from dotenv import load_dotenv
-from db import upsert_topic, upsert_bookmark, prune_bookmarks
+from db import upsert_topic, upsert_bookmark, prune_bookmarks, get_max_message_id, upsert_bookmarks_batch
 from datetime import datetime
 
 load_dotenv()
@@ -35,11 +35,24 @@ async def download_media_async(message_id):
             print(f"Download error: {e}")
     return None
 
-async def sync_bookmarks_with_client(tg_client, chat, topic_id, download=False, photos_only=False):
+async def sync_bookmarks_with_client(tg_client, chat, topic_id, download=False, photos_only=False, full_sync=False):
     """Sync bookmarks for a topic using the provided client."""
     found_ids = []  # Track all messages we find in Telegram
+    bookmarks_buffer = [] # Buffer for batch insert
+
+    # Determine sync mode
+    min_id = 0
+    if not full_sync:
+        min_id = get_max_message_id(topic_id)
+        if min_id > 0:
+            print(f"  Incremental sync from message_id > {min_id}")
+
+    # If full_sync is True, or if min_id is 0, we behave like before (limit=500).
+    # If incremental, we might fetch fewer messages, or more if many new ones.
+    # iter_messages limit applies to how many messages we retrieve.
+    # If incremental, limit=500 means "get up to 500 new messages".
     
-    async for message in tg_client.iter_messages(chat, reply_to=topic_id, limit=500):
+    async for message in tg_client.iter_messages(chat, reply_to=topic_id, min_id=min_id, limit=500):
         if isinstance(message, MessageService):
             continue
         
@@ -93,26 +106,37 @@ async def sync_bookmarks_with_client(tg_client, chat, topic_id, download=False, 
                     if os.path.exists(thumb_path) and os.path.getsize(thumb_path) == 0:
                         os.remove(thumb_path)
         
-        upsert_bookmark(
-            message_id=message.id,
-            topic_id=topic_id,
-            text=text,
-            media_path=media_path,
-            content_type=content_type,
-            date=message.date.isoformat()
-        )
+        bookmarks_buffer.append({
+            'id': message.id, # Use message_id as primary key
+            'topic_id': topic_id,
+            'message_id': message.id,
+            'text': text,
+            'media_path': media_path,
+            'content_type': content_type,
+            'date': message.date.isoformat()
+        })
     
-    # Prune any bookmarks that no longer exist in Telegram
-    prune_bookmarks(topic_id, found_ids)
-    print(f"  Pruned deleted messages (kept {len(found_ids)} bookmarks)")
+    # Batch upsert
+    if bookmarks_buffer:
+        upsert_bookmarks_batch(bookmarks_buffer)
+        print(f"  Upserted {len(bookmarks_buffer)} bookmarks")
+
+    # Prune only if full sync. In incremental mode, we don't know what was deleted.
+    if full_sync:
+        # Prune any bookmarks that no longer exist in Telegram
+        # If we didn't find any messages (found_ids empty) and it's full sync,
+        # it means topic is empty or limit reached?
+        # If found_ids is empty, prune_bookmarks(topic_id, []) will delete all. Correct.
+        prune_bookmarks(topic_id, found_ids)
+        print(f"  Pruned deleted messages (kept {len(found_ids)} bookmarks)")
 
 # Store settings for run_sync to use
 _sync_settings = {'download': False, 'photos_only': False}
 
-async def run_sync(download=True, photos_only=True):
+async def run_sync(download=True, photos_only=True, full_sync=False):
     """Sync topics and bookmarks from Telegram. 
     By default downloads photos only (for web UI - faster sync)."""
-    print(f"[SYNC] Starting sync with download={download}, photos_only={photos_only}")
+    print(f"[SYNC] Starting sync with download={download}, photos_only={photos_only}, full_sync={full_sync}")
     
     # Create a fresh client for each sync to avoid event loop issues
     sync_client = TelegramClient(SESSION_NAME, int(API_ID), API_HASH)
@@ -146,7 +170,8 @@ async def run_sync(download=True, photos_only=True):
             await sync_bookmarks_with_client(
                 sync_client, chat, topic.id, 
                 download=download, 
-                photos_only=photos_only
+                photos_only=photos_only,
+                full_sync=full_sync
             )
         
         print("[SYNC] Sync completed successfully")
@@ -167,6 +192,8 @@ if __name__ == "__main__":
                         help='Download media files during sync')
     parser.add_argument('--photos-only', '-p', action='store_true',
                         help='Only download photos, skip videos')
+    parser.add_argument('--full', '-f', action='store_true',
+                        help='Perform a full sync (re-fetch all messages and prune deleted)')
     args = parser.parse_args()
     
     _sync_settings['download'] = args.download
@@ -175,12 +202,12 @@ if __name__ == "__main__":
     if not os.path.exists('media'): os.makedirs('media')
     if not os.path.exists('data'): os.makedirs('data')
     
-    print(f"Sync options: download={args.download}, photos_only={args.photos_only}")
+    print(f"Sync options: download={args.download}, photos_only={args.photos_only}, full={args.full}")
     
     # Use client.start() for interactive login, then sync
     async def main():
         await client.start()  # This handles login interactively
         print("Logged in successfully!")
-        await run_sync(download=args.download, photos_only=args.photos_only)
+        await run_sync(download=args.download, photos_only=args.photos_only, full_sync=args.full)
     
     asyncio.run(main())
