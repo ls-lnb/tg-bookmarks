@@ -109,17 +109,24 @@ async def sync_bookmarks_with_client(tg_client, chat, topic_id, download=False, 
 # Store settings for run_sync to use
 _sync_settings = {'download': False, 'photos_only': False}
 
-async def run_sync(download=True, photos_only=True):
+async def run_sync(download=True, photos_only=True, existing_client=None):
     """Sync topics and bookmarks from Telegram. 
-    By default downloads photos only (for web UI - faster sync)."""
+    By default downloads photos only (for web UI - faster sync).
+    If existing_client is provided, use it instead of creating a new one."""
     print(f"[SYNC] Starting sync with download={download}, photos_only={photos_only}")
     
-    # Create a fresh client for each sync to avoid event loop issues
-    sync_client = TelegramClient(SESSION_NAME, int(API_ID), API_HASH)
+    # Use existing client or create a fresh one
+    if existing_client:
+        sync_client = existing_client
+        should_disconnect = False
+    else:
+        sync_client = TelegramClient(SESSION_NAME, int(API_ID), API_HASH)
+        should_disconnect = True
     
     try:
-        print("[SYNC] Connecting to Telegram...")
-        await sync_client.connect()
+        if not sync_client.is_connected():
+            print("[SYNC] Connecting to Telegram...")
+            await sync_client.connect()
         
         # Ensure we're authorized
         if not await sync_client.is_user_authorized():
@@ -157,8 +164,9 @@ async def run_sync(download=True, photos_only=True):
         traceback.print_exc()
         return False
     finally:
-        print("[SYNC] Disconnecting...")
-        await sync_client.disconnect()
+        if should_disconnect and sync_client.is_connected():
+            print("[SYNC] Disconnecting...")
+            await sync_client.disconnect()
 
 if __name__ == "__main__":
     import argparse
@@ -181,6 +189,7 @@ if __name__ == "__main__":
     async def main():
         await client.start()  # This handles login interactively
         print("Logged in successfully!")
-        await run_sync(download=args.download, photos_only=args.photos_only)
+        await run_sync(download=args.download, photos_only=args.photos_only, existing_client=client)
+        await client.disconnect()
     
     asyncio.run(main())
