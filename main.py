@@ -190,7 +190,8 @@ def post_sync():
     try:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-        success = loop.run_until_complete(run_sync())
+        # Default to incremental sync (full_sync=False) for speed
+        success = loop.run_until_complete(run_sync(full_sync=False))
         loop.close()
     except Exception as e:
         print(f"Sync error: {e}", flush=True)
