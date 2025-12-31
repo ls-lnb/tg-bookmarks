@@ -133,17 +133,31 @@ async def sync_bookmarks_with_client(tg_client, chat, topic_id, download=False, 
 # Store settings for run_sync to use
 _sync_settings = {'download': False, 'photos_only': False}
 
-async def run_sync(download=True, photos_only=True, full_sync=False):
-    """Sync topics and bookmarks from Telegram. 
-    By default downloads photos only (for web UI - faster sync)."""
+async def run_sync(download=True, photos_only=True, full_sync=False, client=None):
+    """
+    Sync topics and bookmarks from Telegram.
+    By default downloads photos only (for web UI - faster sync).
+
+    args:
+        client: Optional existing TelegramClient instance. If provided, it is used instead of creating a new one.
+    """
     print(f"[SYNC] Starting sync with download={download}, photos_only={photos_only}, full_sync={full_sync}")
     
-    # Create a fresh client for each sync to avoid event loop issues
-    sync_client = TelegramClient(SESSION_NAME, int(API_ID), API_HASH)
+    # Use existing client or create a fresh one
+    if client:
+        sync_client = client
+        # If external client is passed, we assume we shouldn't disconnect it unless we connect it here.
+        # But generally, if it's passed, it might be already connected.
+        should_disconnect = False
+    else:
+        # Create a fresh client for each sync to avoid event loop issues (e.g. from web server)
+        sync_client = TelegramClient(SESSION_NAME, int(API_ID), API_HASH)
+        should_disconnect = True
     
     try:
-        print("[SYNC] Connecting to Telegram...")
-        await sync_client.connect()
+        if not sync_client.is_connected():
+            print("[SYNC] Connecting to Telegram...")
+            await sync_client.connect()
         
         # Ensure we're authorized
         if not await sync_client.is_user_authorized():
@@ -182,8 +196,9 @@ async def run_sync(download=True, photos_only=True, full_sync=False):
         traceback.print_exc()
         return False
     finally:
-        print("[SYNC] Disconnecting...")
-        await sync_client.disconnect()
+        if should_disconnect:
+            print("[SYNC] Disconnecting...")
+            await sync_client.disconnect()
 
 if __name__ == "__main__":
     import argparse
@@ -208,6 +223,7 @@ if __name__ == "__main__":
     async def main():
         await client.start()  # This handles login interactively
         print("Logged in successfully!")
-        await run_sync(download=args.download, photos_only=args.photos_only, full_sync=args.full)
+        # Pass the already connected client to run_sync to avoid "database locked" errors
+        await run_sync(download=args.download, photos_only=args.photos_only, full_sync=args.full, client=client)
     
     asyncio.run(main())
